@@ -8,7 +8,9 @@ library(shiny)
 library(tidyverse)
 source("functions.R")
 
-theme_set(theme_classic())
+
+#increase font size for all ggplots
+theme_set(theme_classic(base_size = 25))
 
 #Parameters - fixed
 fmort_init <- c(0, 0)
@@ -109,13 +111,7 @@ server <- function(input, output) {
       summarize(Metric = discounted_catch(catch, discount_rate, t)) %>%
       select(-species)
   
-    #function for gini coefficient
-    gini <- function(x){
-      n <- length(x)
-      x <- sort(x)
-      G <- sum((2*(1:n) - n - 1)*x)/(n*sum(x))
-      return(1 - G)
-    }
+
 
     #catch equity for commercial fishery
     catch_eq <- xout$catch_long %>%
@@ -161,18 +157,24 @@ output$loc_map <- renderPlot({
   
   output$catches <- renderPlot({
     xtemp <- xout()$catch_long %>%
-      group_by(t, fishery, species) %>% 
+      mutate(Sector = if_else(species == "prey" & fishery == "Recreational", "Commercial prey", paste(fishery, species))) %>%
+      group_by(t, Sector) %>% 
       summarize(catch = sum(catch))
-    ggplot(xtemp, aes(t/steps_per_year, catch, colour = fishery)) +
+    ggplot(xtemp, aes(t/steps_per_year, catch, colour = Sector)) +
       geom_line() +
             geom_vline(xintercept = tmax/steps_per_year, linetype = "dashed") +
-      facet_wrap(~species, scales = "free") +
-      labs(x = "Time", y = "Catches")
+      facet_wrap(~Sector, scales = "free") +
+      labs(x = "Time", y = "Catches") + 
+      #change facet label size
+      theme(strip.text = element_text(size = 15), legend.position = "none")
   })
 
   output$perf_ind <- renderPlot({
     ggplot(perf_ind(), aes(Sector, Metric, fill = Sector)) +
-      geom_bar(stat = "identity", position = "dodge")
+      geom_bar(stat = "identity", position = "dodge") +
+      #rotate x-axis text
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      ylim(0, 1.1)
   })
   
 }

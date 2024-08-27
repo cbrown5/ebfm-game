@@ -7,6 +7,14 @@ vbh <- function(Nt, R0, K) {
 }
 
 
+#function for gini coefficient
+gini <- function(x){
+  n <- length(x)
+  x <- sort(x)
+  G <- sum((2*(1:n) - n - 1)*x)/(n*sum(x))
+  return(1 - G)
+}
+
 #Function for discounted catch
 # Function for discounted catch with time component
 discounted_catch <- function(catch, discount_rate, t){
