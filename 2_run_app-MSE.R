@@ -17,7 +17,7 @@ N0 <- rep(200, nloc)
 P0 <- rep(50, nloc)
 R0 <- rep(1, nloc)
 
-B0 <- 1551*1.6 #calculated given paramaters below. 
+B0 <- 1620#calculated given paramaters below. 
 discount_rate <- 0.05
 nonret <- 0.9 #non-retention
 tmax <- 200
@@ -37,7 +37,7 @@ prey_params <- list(R0 = 0.8, #steepness of the stock-recruitment relationship
                     M = 0.1, #natural mortality
                     Fmort = fmort_init[1], #fishing mortality
                     Dmat = Dmat, #dispersal matrix
-                    recruit_sd = 1, #recruitment variability
+                    recruit_sd = 0.2, #recruitment variability
                     MPAs = NULL) #protected areas
 
 pred_params <- list(R0 = 1, K = 10, M = 0.05,
@@ -55,7 +55,7 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       sliderInput("prey_fmort", "Status quo fishing mortality", min = 0, max = 1, value = 0.25),
-      sliderInput("prey_fmort", "Max fishing mortality", min = 0, max = 1, value = 0.25),
+      sliderInput("prey_fmort_max", "Max fishing mortality", min = 0, max = 1, value = 0.25),
       numericInput("nsims", "Number of simulations", value = 100, min = 10, max = 1000, step = 50),
       sliderInput("TRP", "Target reference point", min = 0, max = 1, value = 0.4),
       sliderInput("LRP", "Limit reference point", min = 0, max = 1, value = 0.2),
@@ -64,9 +64,11 @@ ui <- fluidPage(
     mainPanel(
       tabsetPanel(
         tabPanel("Performance Indicators", tableOutput("perf_ind")),
+        tabPanel("Broken stick plot", plotOutput("broken_stick_plot")),
         tabPanel("Depletion", plotOutput("Brel")),
         tabPanel("Catches", plotOutput("catches")),
-        tabPanel("Biomass", plotOutput("abundance"))
+        tabPanel("Biomass", plotOutput("abundance")),
+        tabPanel("Biomass lines", plotOutput("abundance_lines"))
       )
     )
   )
@@ -93,7 +95,7 @@ server <- function(input, output) {
       }
       sim <- simulate(N0, P0, R0, prey_params, pred_params, tmax, nloc, exp(epsilon[1:tmax]))
       sim2 <- simulate2(sim$N[tmax,], sim$P[tmax,], sim$R[tmax,], prey_params2, 
-                        pred_params2, tmax2, nloc, input$obs_err, B0, input$prey_fmort, input$TRP, input$LRP,
+                        pred_params2, tmax2, nloc, input$obs_err, B0, input$prey_fmort_max, input$TRP, input$LRP,
                         exp(epsilon[(tmax+1):(tmax+tmax2)]))
       catch_all[catch_all$isim==i,"catch"] <- c(sim$Ncatch, sim2$Ncatch)
       abund_all[abund_all$isim==i,"N"] <- c(sim$N, sim2$N)
@@ -125,7 +127,7 @@ server <- function(input, output) {
                 q75 = quantile(Brel, 0.75))
     final_Brel <- xout2$sim_long %>%
       filter(t == (tmax+tmax2)) %>%
-      summarize(x = sum(Brel < input$LRP)/input$nsims)
+      summarize(x = sum(Brel < 0.2)/input$nsims)
     
     #mean catch
     perfout <- data.frame(Metric = c("Median catch", "Median biomass", "Median B/B0", "Risk"), 
@@ -164,6 +166,29 @@ server <- function(input, output) {
       ylim(0, NA) +
       labs(x = "Time", y = "Biomass")
   })
+  
+  output$abundance_lines <- renderPlot({
+    ggplot(filter(xout()$sim_long, isim <101), aes(t/steps_per_year, N, group = isim)) +
+      geom_line(alpha = 0.3) +
+      geom_vline(xintercept = tmax/steps_per_year, linetype = "dashed") +
+      ylim(0, NA) +
+      labs(x = "Time", y = "Biomass")
+  })
+  
+  output$broken_stick_plot <- renderPlot({
+   x <- seq(0, 1, length.out = 100)
+   y <- rep(NA, 100)
+   for (i in 1:100){
+     y[i] <- broken_stick(x[i], input$prey_fmort_max, input$TRP, input$LRP)
+   }
+   ggplot(data.frame(x = x, y = y), aes(x, y)) +
+     geom_line() +
+     geom_hline(yintercept = input$prey_fmort_max, linetype = "dashed") +
+     geom_vline(xintercept = input$LRP, linetype = "dashed", color = "orange") +
+     geom_vline(xintercept = input$TRP, linetype = "dashed", color = "blue") +
+     labs(x = "Depletion", y = "F mortality")
+  })
+  
   # 
   # output$catches <- renderPlot({
   #   xtemp <- xout()$catch_long %>%
