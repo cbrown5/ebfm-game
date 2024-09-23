@@ -24,11 +24,11 @@ discounted_catch <- function(catch, discount_rate, t){
 }
 
 # population growth of the predator and prey
-deltaN <- function(Nt, Pt, pred_recruits, prey_params, pred_params){
+deltaN <- function(Nt, Pt, pred_recruits, prey_params, pred_params, epsilon){
     Nt1 <- Nt
     Pt1 <- Pt
     # add recruits, includes larval dispersal
-    Nt1 <- Nt + vbh(Nt%*%prey_params$Dmat, prey_params$R0, prey_params$K) 
+    Nt1 <- Nt + (vbh(Nt%*%prey_params$Dmat, prey_params$R0, prey_params$K) * epsilon)
     # Pt1 <- Pt + vbh(Pt%*%prey_params$Dmat, pred_params$R0, pred_params$K)
 
     # predation
@@ -56,13 +56,15 @@ deltaN <- function(Nt, Pt, pred_recruits, prey_params, pred_params){
     # fishing mortality
     Nt1 <- Nt1 - Ncatch
     Pt1 <- Pt1 - Pcatch
-
+    
+    # if (nrow(rbind(Nt1, Pt1, recruits_plus, Ncatch, Pcatch))<5)
+    #   browser()
     return(rbind(Nt1, Pt1, recruits_plus, Ncatch, Pcatch))
 }
 
 # Function to simulate population dynamics
 
-simulate <- function(N0, P0, R0, prey_params, pred_params, tmax, nloc){
+simulate <- function(N0, P0, R0, prey_params, pred_params, tmax, nloc, epsilon){
   N <- matrix(NA, nrow = tmax, ncol = nloc)
   P <- matrix(NA, nrow = tmax, ncol = nloc)
   R <- matrix(NA, nrow = tmax, ncol = nloc)
@@ -92,20 +94,21 @@ simulate <- function(N0, P0, R0, prey_params, pred_params, tmax, nloc){
     pred_params$Fmort[-pred_params$MPA] <- pred_params$Fmort[-pred_params$MPA] + 
       fact - pred_params$Fmort[-pred_params$MPA] *fact
   }
-
   for (t in 2:tmax){
     if (t <= pred_params$tmat){
       Rtemp <- R0
     } else {
       Rtemp <- R[t-pred_params$tmat,]
     }
-    NP <- deltaN(N[t-1,], P[t-1,], Rtemp, prey_params, pred_params)
+    NP <- deltaN(N[t-1,], P[t-1,], Rtemp, prey_params, pred_params, epsilon[t])
     N[t,] <- NP[1,]
     P[t,] <- NP[2,]
     R[t,] <- NP[3,]
     Ncatch[t,] <- (NP[4,])
     Pcatch[t,] <- (NP[5,])
   }
+ 
+  
   return(list(N=N, P=P, R= R, Ncatch = Ncatch, Pcatch = Pcatch))
 }
 
@@ -160,4 +163,79 @@ catch_long <- sim$Ncatch %>%
   rename(catch = P) 
   ) 
   return(list(sim_long = sim_long, catch_long = catch_long))
+}
+
+#broken stick harvest strategy
+broken_stick <- function(dep, Fmax, TRP, LRP){
+  #broken stick harvest strategy
+  #dep is the proportion of the population that is dependent on the resource
+  #Fmax is the maximum fishing mortality
+  #TRP is the target resource proportion
+  #LRP is the limit resource proportion
+  #returns the fishing mortality
+  if (dep < LRP){
+    Fcurrent <- 0
+  } else if (dep < TRP){
+    Fcurrent <- Fmax * (dep - LRP)/(TRP - LRP)
+  } else {
+    Fcurrent <- Fmax
+  }
+  return(Fcurrent)
+}
+
+#simulate, but with broken stick rule applied
+
+simulate2<- function(N0, P0, R0, prey_params, pred_params, tmax, nloc, obs_err, B0, Fmax, TRP, LRP, epsilon){
+  N <- matrix(NA, nrow = tmax, ncol = nloc)
+  P <- matrix(NA, nrow = tmax, ncol = nloc)
+  R <- matrix(NA, nrow = tmax, ncol = nloc)
+  Ncatch <- matrix(0, nrow = tmax, ncol = nloc)
+  Pcatch <- matrix(0, nrow = tmax, ncol = nloc)
+  N[1,] <- N0
+  P[1,] <- P0
+  R[1:pred_params$tmat,] <- R0
+  
+  
+  
+  # Modify Fmort to allow for protected areas
+  prey_params$Fmort <- rep(prey_params$Fmort, nloc)
+  if (!is.null(prey_params$MPAs)){
+    prey_params$Fmort[prey_params$MPA] <- 0
+    #redistribution fishing effort
+    fact <- length(prey_params$MPAs)*max(prey_params$Fmort)/(nloc - length(prey_params$MPAs))
+    #add displaced effort to fished areas
+    prey_params$Fmort[-prey_params$MPA] <- prey_params$Fmort[-prey_params$MPA] + 
+      fact - prey_params$Fmort[-prey_params$MPA] *fact
+  }
+  
+  pred_params$Fmort <- rep(pred_params$Fmort, nloc)
+  if (!is.null(pred_params$MPAs)){
+    pred_params$Fmort[pred_params$MPA] <- 0
+    #redistribution fishing effort
+    fact <- length(pred_params$MPAs)*max(pred_params$Fmort)/(nloc - length(pred_params$MPAs))
+    #add displaced effort to fished areas
+    pred_params$Fmort[-pred_params$MPA] <- pred_params$Fmort[-pred_params$MPA] + 
+      fact - pred_params$Fmort[-pred_params$MPA] *fact
+  }
+  for (t in 2:tmax){
+    if (t <= pred_params$tmat){
+      Rtemp <- R0
+    } else {
+      Rtemp <- R[t-pred_params$tmat,]
+    }
+    NP <- deltaN(N[t-1,], P[t-1,], Rtemp, prey_params, pred_params, epsilon[t])
+    N[t,] <- NP[1,]
+    P[t,] <- NP[2,]
+    R[t,] <- NP[3,]
+    Ncatch[t,] <- (NP[4,])
+    Pcatch[t,] <- (NP[5,])
+    
+    #update F using harvest strategy rule
+    dep <- (sum(N[t,])*exp(rnorm(1, 0, obs_err)))/B0
+    prey_params$Fmort <- broken_stick(dep, Fmax, TRP, LRP)
+    
+  }
+  
+  
+  return(list(N=N, P=P, R= R, Ncatch = Ncatch, Pcatch = Pcatch))
 }
